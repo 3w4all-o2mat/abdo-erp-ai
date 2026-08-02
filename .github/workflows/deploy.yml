@@ -3,7 +3,7 @@ name: Deploy to VPS
 on:
   push:
     branches: [main, master]
-  workflow_dispatch:        # manual trigger from the Actions tab
+  workflow_dispatch:
 
 env:
   IMAGE_NAME: abdo-erp
@@ -16,10 +16,6 @@ jobs:
     timeout-minutes: 25
 
     env:
-      # The runner ships Node 24 by default; this workflow only uses
-      # Docker + SSH (no JS), so the Node 20 deprecation notice is
-      # informational. Acknowledged per:
-      # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
       ACTIONS_NODE_VERSION: "22"
 
@@ -30,7 +26,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Speed up rebuilds by caching layers in the GitHub Actions cache.
       - name: Cache Docker layers
         uses: actions/cache@v4
         with:
@@ -42,7 +37,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          load: true                 # load into the runner's Docker daemon
+          load: true
           push: false
           tags: |
             ${{ env.IMAGE_NAME }}:${{ github.sha }}
@@ -55,11 +50,6 @@ jobs:
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
 
-      # ----------------------------------------------------------------
-      # SSH key is written to a temp file on the runner and removed at
-      # the end. Using appleboy/ssh-action@v1 (actively maintained)
-      # for all command execution on the VPS.
-      # ----------------------------------------------------------------
       - name: Prepare SSH key
         if: always()
         run: |
@@ -70,33 +60,18 @@ jobs:
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
           echo "SSH key ready."
 
-      - name: Ensure deploy directory exists on VPS
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: mkdir -p ${{ env.VPS_DEPLOY_DIR }} && echo "VPS OK"
-
-      # Stream the new image directly to the VPS Docker daemon.
-      # This avoids storing the tarball as a GitHub Actions artifact.
-      - name: Transfer Docker image to VPS
-        run: |
-          set -e
-          echo "Streaming image ${{ env.IMAGE_NAME }}:${{ github.sha }} to ${{ secrets.VPS_HOST }}..."
-          docker save \
-            ${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            ${{ env.IMAGE_NAME }}:latest \
-            | gzip \
-            | ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-                ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-                "set -e; gunzip | docker load; echo IMAGE_LOADED_OK"
-
-      # Single SSH step: upload files (via scp from runner), set up
-      # the deploy directory, and execute the deploy script. Bundling
-      # everything in one SSH invocation makes the path layout
-      # explicit and avoids the directory-preservation quirks of the
-      # scp-action.
+      # ---------------------------------------------------------------
+      # Run everything on the VPS in a single SSH session.
+      #
+      # The VPS already has a git clone of this repo at
+      # $VPS_DEPLOY_DIR. So we just:
+      #   1. cd into the clone
+      #   2. git fetch + reset to the current commit (so deploy.sh and
+      #      docker-compose.yml are always the version being deployed)
+      #   3. load the new Docker image (already streamed to the VPS
+      #      via a separate step above)
+      #   4. run scripts/deploy.sh
+      # ---------------------------------------------------------------
       - name: Run deploy on VPS
         uses: appleboy/ssh-action@v1
         with:
@@ -104,88 +79,36 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           command_timeout: 15m
+          envs: NEW_IMAGE,NEW_TAG,PORT,COMMIT,DEPLOYED_AT
           script: |
             set -e
             DEPLOY_DIR="${{ env.VPS_DEPLOY_DIR }}"
-            mkdir -p "$DEPLOY_DIR"
+
+            echo "=== Pre-flight ==="
+            echo "PWD: $(pwd)"
+            echo "DEPLOY_DIR: $DEPLOY_DIR"
+            if [ ! -d "$DEPLOY_DIR" ]; then
+              echo "ERROR: $DEPLOY_DIR does not exist on the VPS."
+              echo "       Please run the one-time VPS setup from docs/SETUP_VPS.md first."
+              exit 1
+            fi
             cd "$DEPLOY_DIR"
 
-            # Upload docker-compose.yml and scripts/deploy.sh using
-            # the runner's `scp` against the VPS. This is the same
-            # ssh key the rest of the workflow uses.
-            # We do this from the runner and pipe through ssh.
-            echo "Syncing files from runner..."
-            ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-                ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} \
-                "mkdir -p $DEPLOY_DIR"
+            echo "=== Pulling latest scripts/deploy.sh and docker-compose.yml ==="
+            # Fetch the exact commit being deployed. This is the most
+            # robust way to ensure deploy.sh matches the image we're
+            # about to start.
+            git fetch origin "${{ github.ref_name }}" --depth=1
+            git checkout FETCH_HEAD -- scripts/deploy.sh docker-compose.yml
+            chmod +x scripts/deploy.sh
 
-            # Use a heredoc to write deploy.sh inline. This is the
-            # most foolproof way — no path mapping issues.
-            cat > "$DEPLOY_DIR/deploy.sh" <<'DEPLOY_EOF'
-            #!/usr/bin/env bash
-            set -euo pipefail
-            DEPLOY_DIR="${DEPLOY_DIR:-/home/ubuntu/abdo-erp}"
-            COMPOSE_FILE="${COMPOSE_FILE:-${DEPLOY_DIR}/docker-compose.yml}"
-            HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/}"
-            HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
-            HEALTH_SLEEP="${HEALTH_SLEEP:-2}"
-            cd "${DEPLOY_DIR}"
-            echo "============================================================"
-            echo "  abdo-erp deploy"
-            echo "  IMAGE : ${NEW_IMAGE:-<unset>}"
-            echo "  TAG   : ${NEW_TAG:-<unset>}"
-            echo "  PORT  : ${PORT:-3000}"
-            echo "  COMMIT: ${COMMIT:-unknown}"
-            echo "  AT    : ${DEPLOYED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-            echo "  DIR   : ${DEPLOY_DIR}"
-            echo "============================================================"
-            if ! command -v docker >/dev/null 2>&1; then echo "ERROR: docker not installed" >&2; exit 1; fi
-            if ! docker compose version >/dev/null 2>&1; then echo "ERROR: docker compose plugin not available" >&2; exit 1; fi
-            if [ ! -f "${COMPOSE_FILE}" ]; then echo "ERROR: ${COMPOSE_FILE} not found" >&2; exit 1; fi
-            if [ ! -f "${DEPLOY_DIR}/.env.production" ]; then echo "ERROR: ${DEPLOY_DIR}/.env.production not found" >&2; exit 1; fi
-            EXPECTED_IMAGE="${NEW_IMAGE:-abdo-erp:latest}"
-            if ! docker image inspect "${EXPECTED_IMAGE}" >/dev/null 2>&1; then echo "ERROR: image '${EXPECTED_IMAGE}' not loaded" >&2; exit 1; fi
-            chmod 600 "${DEPLOY_DIR}/.env.production" || true
-            export IMAGE="${EXPECTED_IMAGE}"
-            export TAG="${NEW_TAG:-latest}"
-            export PORT="${PORT:-3000}"
-            export COMMIT="${COMMIT:-unknown}"
-            export DEPLOYED_AT="${DEPLOYED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-            echo "[1/5] Ensuring postgres is up and healthy..."
-            docker compose -f "${COMPOSE_FILE}" up -d postgres
-            for i in $(seq 1 30); do
-              PG_STATUS=$(docker inspect --format='{{.State.Health.Status}}' \
-                "$(docker compose -f "${COMPOSE_FILE}" ps -q postgres)" 2>/dev/null || echo "starting")
-              if [ "${PG_STATUS}" = "healthy" ]; then echo "       postgres is healthy."; break; fi
-              if [ "$i" -eq 30 ]; then echo "ERROR: postgres did not become healthy" >&2; docker compose -f "${COMPOSE_FILE}" logs --tail=50 postgres >&2; exit 1; fi
-              sleep 2
-            done
-            echo "[2/5] Applying Prisma migrations..."
-            docker compose -f "${COMPOSE_FILE}" run --rm --no-deps app prisma migrate deploy
-            echo "[3/5] Starting app..."
-            docker compose -f "${COMPOSE_FILE}" up -d --force-recreate --no-deps app
-            echo "[4/5] Health check..."
-            for i in $(seq 1 "${HEALTH_RETRIES}"); do
-              if curl -fsS -o /dev/null --max-time 3 "${HEALTH_URL}"; then echo "       app is healthy."; break; fi
-              if [ "$i" -eq "${HEALTH_RETRIES}" ]; then echo "ERROR: app unhealthy" >&2; docker compose -f "${COMPOSE_FILE}" logs --tail=80 app >&2; exit 1; fi
-              sleep "${HEALTH_SLEEP}"
-            done
-            echo "[5/5] Pruning images..."
-            docker image prune -f >/dev/null || true
-            echo "============================================================"
-            echo "  Deploy succeeded."
-            echo "============================================================"
-            DEPLOY_EOF
-            chmod +x "$DEPLOY_DIR/deploy.sh"
-            echo "deploy.sh is at: $(ls -la $DEPLOY_DIR/deploy.sh)"
-
-            # Run the deploy script.
-            NEW_IMAGE=${{ env.IMAGE_NAME }}:${{ github.sha }} \
-            NEW_TAG=${{ github.sha }} \
-            PORT=${{ env.VPS_PORT }} \
-            COMMIT=${{ github.sha }} \
-            DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-              bash "$DEPLOY_DIR/deploy.sh"
+            echo "=== Running deploy.sh ==="
+            NEW_IMAGE="${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+            NEW_TAG="${{ github.sha }}" \
+            PORT="${{ env.VPS_PORT }}" \
+            COMMIT="${{ github.sha }}" \
+            DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              bash "$DEPLOY_DIR/scripts/deploy.sh"
 
       - name: Cleanup SSH key
         if: always()
