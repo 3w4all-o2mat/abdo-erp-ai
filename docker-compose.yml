@@ -3,23 +3,18 @@ services:
     image: postgres:16-alpine
     container_name: abdo_erp_postgres
     restart: unless-stopped
-    env_file:
-      - .env.production
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data 
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - ./postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    networks:
+      - app_network
 
 
   app:
-    image: ${IMAGE:-abdo-erp}:${TAG:-latest}
+    image: ghcr.io/3w4all-o2mat/abdo-erp-ai:latest
     container_name: abdo-erp
     restart: unless-stopped
     ports:
@@ -45,5 +40,8 @@ services:
     volumes:
       - ./public:/app/public
     depends_on:
-      postgres:
-        condition: service_healthy
+      - postgres
+
+networks:
+  app_network:
+    driver: bridge
