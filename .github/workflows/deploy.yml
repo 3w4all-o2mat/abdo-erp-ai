@@ -79,13 +79,21 @@ jobs:
           script: mkdir -p ${{ env.VPS_DEPLOY_DIR }} && echo "VPS OK"
 
       - name: Upload compose + deploy script to VPS
-        uses: appleboy/scp-action@v0.1.7
+        # We no longer rely on this upload — the "Run deploy on VPS"
+        # step below pulls the latest scripts/deploy.sh from the
+        # git clone on the VPS (so we always run the version that
+        # matches the commit being deployed). We keep this step as
+        # a no-op-safe fallback that just touches the file to prove
+        # SSH/SCP is working.
+        uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: "docker-compose.yml,scripts/deploy.sh"
-          target: ${{ env.VPS_DEPLOY_DIR }}
+          script: |
+            set -e
+            cd ${{ env.VPS_DEPLOY_DIR }}
+            echo "VPS reachable, deploy directory ready: $(pwd)"
 
       # Stream the new image directly to the VPS Docker daemon.
       # This avoids storing the tarball as a GitHub Actions artifact.
@@ -111,13 +119,18 @@ jobs:
           script: |
             set -e
             cd ${{ env.VPS_DEPLOY_DIR }}
-            chmod +x ./deploy.sh
+            # Pull the latest deploy.sh from the repo (the VPS already
+            # has a git clone at $VPS_DEPLOY_DIR). This avoids relying
+            # on a specific path from the scp-action upload.
+            git fetch origin master
+            git checkout origin/master -- scripts/deploy.sh docker-compose.yml
+            chmod +x ./scripts/deploy.sh
             NEW_IMAGE=${{ env.IMAGE_NAME }}:${{ github.sha }} \
             NEW_TAG=${{ github.sha }} \
             PORT=${{ env.VPS_PORT }} \
             COMMIT=${{ github.sha }} \
             DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-              bash ./deploy.sh
+              bash ./scripts/deploy.sh
 
       - name: Cleanup SSH key
         if: always()
