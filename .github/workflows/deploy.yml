@@ -61,16 +61,10 @@ jobs:
           echo "SSH key ready."
 
       # ---------------------------------------------------------------
-      # Run everything on the VPS in a single SSH session.
-      #
-      # The VPS already has a git clone of this repo at
-      # $VPS_DEPLOY_DIR. So we just:
-      #   1. cd into the clone
-      #   2. git fetch + reset to the current commit (so deploy.sh and
-      #      docker-compose.yml are always the version being deployed)
-      #   3. load the new Docker image (already streamed to the VPS
-      #      via a separate step above)
-      #   4. run scripts/deploy.sh
+      # The deploy script and docker-compose.yml are pulled directly
+      # from the raw GitHub URL for the commit being deployed. This
+      # removes any dependency on a git clone existing on the VPS or
+      # on scp path-mapping quirks.
       # ---------------------------------------------------------------
       - name: Run deploy on VPS
         uses: appleboy/ssh-action@v1
@@ -83,24 +77,31 @@ jobs:
           script: |
             set -e
             DEPLOY_DIR="${{ env.VPS_DEPLOY_DIR }}"
+            RAW_BASE="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}"
 
             echo "=== Pre-flight ==="
-            echo "PWD: $(pwd)"
             echo "DEPLOY_DIR: $DEPLOY_DIR"
+            echo "RAW_BASE:   $RAW_BASE"
             if [ ! -d "$DEPLOY_DIR" ]; then
-              echo "ERROR: $DEPLOY_DIR does not exist on the VPS."
-              echo "       Please run the one-time VPS setup from docs/SETUP_VPS.md first."
-              exit 1
+              mkdir -p "$DEPLOY_DIR"
+              echo "       created (was missing)."
             fi
             cd "$DEPLOY_DIR"
 
-            echo "=== Pulling latest scripts/deploy.sh and docker-compose.yml ==="
-            # Fetch the exact commit being deployed. This is the most
-            # robust way to ensure deploy.sh matches the image we're
-            # about to start.
-            git fetch origin "${{ github.ref_name }}" --depth=1
-            git checkout FETCH_HEAD -- scripts/deploy.sh docker-compose.yml
-            chmod +x scripts/deploy.sh
+            echo "=== Downloading deploy.sh and docker-compose.yml from GitHub ==="
+            if command -v curl >/dev/null 2>&1; then
+              curl -fsSL -o deploy.sh        "$RAW_BASE/scripts/deploy.sh"
+              curl -fsSL -o docker-compose.yml "$RAW_BASE/docker-compose.yml"
+            elif command -v wget >/dev/null 2>&1; then
+              wget -q -O deploy.sh        "$RAW_BASE/scripts/deploy.sh"
+              wget -q -O docker-compose.yml "$RAW_BASE/docker-compose.yml"
+            else
+              echo "ERROR: neither curl nor wget is available on the VPS" >&2
+              exit 1
+            fi
+            chmod +x deploy.sh
+            echo "       deploy.sh:        $(ls -la deploy.sh)"
+            echo "       docker-compose.yml: $(ls -la docker-compose.yml)"
 
             echo "=== Running deploy.sh ==="
             NEW_IMAGE="${{ env.IMAGE_NAME }}:${{ github.sha }}" \
@@ -108,7 +109,7 @@ jobs:
             PORT="${{ env.VPS_PORT }}" \
             COMMIT="${{ github.sha }}" \
             DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              bash "$DEPLOY_DIR/scripts/deploy.sh"
+              bash "$DEPLOY_DIR/deploy.sh"
 
       - name: Cleanup SSH key
         if: always()
