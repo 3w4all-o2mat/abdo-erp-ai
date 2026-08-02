@@ -1,6 +1,9 @@
 generator client {
   provider = "prisma-client-js"
-  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+  // "native" = the developer's machine (macOS arm64/x64 in our case).
+  // "debian-openssl-3.0.x" = Debian Bookworm / node:22-slim (CI runner + VPS).
+  // "linux-musl-openssl-3.0.x" = Alpine (kept for anyone using an Alpine base).
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {

@@ -1,126 +1,126 @@
 # ============================================
-# Stage 1: Dependencies Installation Stage
+# abdo-erp — multi-stage Dockerfile
+# ============================================
+#  • Stage 1 (dependencies): install node_modules with the appropriate
+#    lockfile (pnpm preferred, then npm, then yarn).
+#  • Stage 2 (builder):       run `prisma generate` (needed for the
+#    @prisma/client to ship the query engine) and `next build` which
+#    emits a standalone output in `.next/standalone`.
+#  • Stage 3 (runner):       small runtime image that contains only
+#    the standalone server, the Prisma engine + CLI, and the
+#    prisma/migrations directory. The deploy script runs
+#    `prisma migrate deploy` inside the new image.
 # ============================================
 
-# IMPORTANT: Node.js Version Maintenance
-# This Dockerfile uses Node.js 22-slim, which is the latest LTS version at the time of writing.
-# To ensure security and compatibility, regularly update the NODE_VERSION ARG to the latest LTS version.
+# IMPORTANT: keep this on the latest Node LTS for security and
+# Next.js 15 compatibility.
 ARG NODE_VERSION=22-slim
 
+# ============================================
+# Stage 1: Dependencies
+# ============================================
 FROM node:${NODE_VERSION} AS dependencies
 
-# Set working directory
 WORKDIR /app
 
-# Copy package-related files first to leverage Docker's caching mechanism
+# Copy lockfiles + package.json first to leverage Docker layer cache.
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* .npmrc* ./
 
-# Install project dependencies with frozen lockfile for reproducible builds
 RUN --mount=type=cache,target=/root/.npm \
     --mount=type=cache,target=/usr/local/share/.cache/yarn \
     --mount=type=cache,target=/root/.local/share/pnpm/store \
-  if [ -f package-lock.json ]; then \
+  if [ -f pnpm-lock.yaml ]; then \
+    corepack enable pnpm && pnpm install --frozen-lockfile; \
+  elif [ -f package-lock.json ]; then \
     npm ci --no-audit --no-fund; \
   elif [ -f yarn.lock ]; then \
-    corepack enable yarn && yarn install --frozen-lockfile --production=false; \
-  elif [ -f pnpm-lock.yaml ]; then \
-    corepack enable pnpm && pnpm install --frozen-lockfile; \
+    corepack enable yarn && yarn install --frozen-lockfile; \
   else \
     echo "No lockfile found." && exit 1; \
   fi
 
 # ============================================
-# Stage 2: Build Next.js application in standalone mode
+# Stage 2: Builder
 # ============================================
-
 FROM node:${NODE_VERSION} AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Copy project dependencies from dependencies stage
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Re-use deps from stage 1
 COPY --from=dependencies /app/node_modules ./node_modules
 
-# Copy application source code
+# Copy the rest of the source. .dockerignore keeps this minimal
+# (no .next, no node_modules, no .env*, no dev.db, etc.).
 COPY . .
 
-# Keep scripts/ and db/ in the builder stage so the runner stage can
-# COPY them from --from=builder above.
-ENV NODE_ENV=production
+# Generate the Prisma query engine into node_modules/.prisma.
+# The standalone output relies on it at runtime, and `migrate deploy`
+# needs the prisma CLI (which we re-install in the runner stage).
+RUN if [ -f pnpm-lock.yaml ]; then \
+      corepack enable pnpm && pnpm prisma generate; \
+    elif [ -f package-lock.json ]; then \
+      npx prisma generate; \
+    elif [ -f yarn.lock ]; then \
+      corepack enable yarn && yarn prisma generate; \
+    fi
 
-# Next.js collects completely anonymous telemetry data about general usage.
-# Learn more here: https://nextjs.org/telemetry
-# Uncomment the following line in case you want to disable telemetry during the build.
-# ENV NEXT_TELEMETRY_DISABLED=1
+# Build the Next.js app (output: "standalone" is set in next.config.mjs).
+RUN if [ -f pnpm-lock.yaml ]; then \
+      corepack enable pnpm && pnpm build; \
+    elif [ -f package-lock.json ]; then \
+      npm run build; \
+    elif [ -f yarn.lock ]; then \
+      corepack enable yarn && yarn build; \
+    fi
 
-# Build Next.js application
-# If you want to speed up Docker rebuilds, you can cache the build artifacts
-# by adding: --mount=type=cache,target=/app/.next/cache
-# This caches the .next/cache directory across builds, but it also prevents
-# .next/cache/fetch-cache from being included in the final image, meaning
-# cached fetch responses from the build won't be available at runtime.
-RUN if [ -f package-lock.json ]; then \
-    npm run build; \
-  elif [ -f yarn.lock ]; then \
-    corepack enable yarn && yarn build; \
-  elif [ -f pnpm-lock.yaml ]; then \
-    corepack enable pnpm && pnpm build; \
-  else \
-    echo "No lockfile found." && exit 1; \
-  fi
-
-# Ensure the public/ directory exists so the standalone runner image can
-# COPY it (the public/ directory is gitignored and dockerignored in this
-# project — static assets are managed on the VPS via a mounted volume).
+# Ensure /app/public exists so the runner stage can COPY it.
+# (The .dockerignore excludes public/, but it can still be mounted
+# from the host at runtime via the docker-compose volume.)
 RUN mkdir -p /app/public
 
 # ============================================
-# Stage 3: Run Next.js application
+# Stage 3: Runner
 # ============================================
-
 FROM node:${NODE_VERSION} AS runner
 
-# Set working directory
 WORKDIR /app
 
-# Set production environment variables
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
+ENV NEXT_TELEMETRY_DISABLED=1
 
-# Next.js collects completely anonymous telemetry data about general usage.
-# Learn more here: https://nextjs.org/telemetry
-# Uncomment the following line in case you want to disable telemetry during the run time.
-# ENV NEXT_TELEMETRY_DISABLED=1
+# ----- System deps required by Prisma + Next.js standalone server -----
+# - openssl: prisma migrate needs it to talk to postgres
+# - dumb-init: proper PID 1 / signal handling
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl dumb-init ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
-# Copy production assets
+# Copy the Next.js standalone server, static assets, and public/.
 COPY --from=builder --chown=node:node /app/public ./public
-
-# Copy maintenance scripts and SQL schema so the deploy script can run
-# migrations inside the running container (scripts/*.mjs + db/full-schema.sql).
-# Next.js' standalone output tracing only copies files in the import graph,
-# so scripts/ and db/ must be copied explicitly into the runner stage.
-COPY --from=builder --chown=node:node /app/scripts ./scripts
-COPY --from=builder --chown=node:node /app/db ./db
-
-# Set the correct permission for prerender cache
-RUN mkdir .next
-RUN chown node:node .next
-
-# Automatically leverage output traces to reduce image size
-# https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 
-# If you want to persist the fetch cache generated during the build so that
-# cached responses are available immediately on startup, uncomment this line:
-# COPY --from=builder --chown=node:node /app/.next/cache ./.next/cache
+# Copy the Prisma schema + migrations so the deploy script can run
+# `npx prisma migrate deploy` inside this image. We deliberately do NOT
+# copy scripts/ (deploy.sh runs on the VPS host) and we do NOT copy
+# db/ (no such directory in the repo).
+COPY --from=builder --chown=node:node /app/prisma ./prisma
+COPY --from=builder --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=node:node /app/node_modules/@prisma ./node_modules/@prisma
 
-# Switch to non-root user for security best practices
+# Ensure .next/ exists and is owned by the non-root user.
+RUN mkdir -p .next && chown -R node:node .next
+
+# Switch to non-root user (Node's official image ships a `node` user).
 USER node
 
-# Expose port 3000 to allow HTTP traffic
 EXPOSE 3000
 
-# Start Next.js standalone server
+# dumb-init gives us proper signal forwarding (SIGTERM → next start stop).
+ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "server.js"]

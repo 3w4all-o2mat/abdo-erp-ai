@@ -1,0 +1,9 @@
+# Placeholder so the `db/` directory exists in the repo.
+#
+# This directory was previously referenced by the Dockerfile for
+# `db/full-schema.sql`. The Prisma migration system (prisma/migrations)
+# is now the single source of truth for the database schema, so this
+# folder is intentionally empty. It is kept here only to make the
+# historical `COPY --from=builder /app/db ./db` no-op safe and to
+# document where one-off SQL scripts (e.g. seed backfills, custom
+# indexes) should live if needed in the future.
