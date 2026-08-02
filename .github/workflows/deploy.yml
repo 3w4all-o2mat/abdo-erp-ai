@@ -78,21 +78,27 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           script: mkdir -p ${{ env.VPS_DEPLOY_DIR }} && echo "VPS OK"
 
-      - name: Upload compose + deploy script to VPS
-        # Use a plain `scp` here instead of appleboy/scp-action so we
-        # have explicit control over the destination path. The scp
-        # action's tar-based transport preserves the source directory
-        # structure, which would put scripts/deploy.sh at
-        # $VPS_DEPLOY_DIR/scripts/deploy.sh instead of the root.
-        run: |
-          set -e
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-              ./docker-compose.yml \
-              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.VPS_DEPLOY_DIR }}/
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
-              ./scripts/deploy.sh \
-              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.VPS_DEPLOY_DIR }}/deploy.sh
-          echo "Files uploaded to ${{ env.VPS_DEPLOY_DIR }}"
+      - name: Upload docker-compose.yml
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "docker-compose.yml"
+          target: ${{ env.VPS_DEPLOY_DIR }}
+
+      # `strip_components: 1` drops the leading "scripts/" from the
+      # archived path, so scripts/deploy.sh lands at the deploy
+      # directory root instead of scripts/deploy.sh.
+      - name: Upload deploy.sh (flattened)
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: "scripts/deploy.sh"
+          target: ${{ env.VPS_DEPLOY_DIR }}
+          strip_components: 1
 
       # Stream the new image directly to the VPS Docker daemon.
       # This avoids storing the tarball as a GitHub Actions artifact.
