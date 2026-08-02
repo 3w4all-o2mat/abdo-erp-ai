@@ -7,6 +7,7 @@ on:
 
 env:
   IMAGE_NAME: abdo-erp
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
   VPS_DEPLOY_DIR: /home/ubuntu/abdo-erp
   VPS_PORT: 3000
 
@@ -15,9 +16,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
 
-    env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
-      ACTIONS_NODE_VERSION: "22"
+    permissions:
+      contents: read
+      packages: write   # required to push to GHCR
 
     steps:
       - name: Checkout
@@ -33,15 +34,21 @@ jobs:
           key: ${{ runner.os }}-buildx-${{ github.sha }}
           restore-keys: ${{ runner.os }}-buildx-
 
-      - name: Build image
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
-          load: true
-          push: false
+          push: true
           tags: |
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.IMAGE_NAME }}:latest
+            ${{ env.REGISTRY_IMAGE }}:${{ github.sha }}
+            ${{ env.REGISTRY_IMAGE }}:latest
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
 
@@ -60,12 +67,6 @@ jobs:
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
           echo "SSH key ready."
 
-      # ---------------------------------------------------------------
-      # The deploy script and docker-compose.yml are pulled directly
-      # from the raw GitHub URL for the commit being deployed. This
-      # removes any dependency on a git clone existing on the VPS or
-      # on scp path-mapping quirks.
-      # ---------------------------------------------------------------
       - name: Run deploy on VPS
         uses: appleboy/ssh-action@v1
         with:
@@ -73,7 +74,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           command_timeout: 15m
-          envs: NEW_IMAGE,NEW_TAG,PORT,COMMIT,DEPLOYED_AT
+          envs: NEW_IMAGE,NEW_TAG,PORT,COMMIT,DEPLOYED_AT,GHCR_USER,GHCR_TOKEN
           script: |
             set -e
             DEPLOY_DIR="${{ env.VPS_DEPLOY_DIR }}"
@@ -103,16 +104,14 @@ jobs:
             echo "       deploy.sh:        $(ls -la deploy.sh)"
             echo "       docker-compose.yml: $(ls -la docker-compose.yml)"
 
+            echo "=== Logging in to GHCR on VPS ==="
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            echo "=== Pulling image ==="
+            docker pull "${{ env.REGISTRY_IMAGE }}:${{ github.sha }}"
+
             echo "=== Running deploy.sh ==="
-            NEW_IMAGE="${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+            NEW_IMAGE="${{ env.REGISTRY_IMAGE }}:${{ github.sha }}" \
             NEW_TAG="${{ github.sha }}" \
             PORT="${{ env.VPS_PORT }}" \
             COMMIT="${{ github.sha }}" \
-            DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              bash "$DEPLOY_DIR/deploy.sh"
-
-      - name: Cleanup SSH key
-        if: always()
-        run: |
-          rm -f ~/.ssh/deploy_key
-          echo "SSH key removed from runner."
