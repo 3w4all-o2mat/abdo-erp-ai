@@ -101,17 +101,34 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Copy the Next.js standalone server, static assets, and public/.
+# `outputFileTracingIncludes` in next.config.mjs pulls in the
+# @prisma/client + .prisma/client at build time, so the runtime
+# application has everything it needs.
 COPY --from=builder --chown=node:node /app/public ./public
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 
 # Copy the Prisma schema + migrations so the deploy script can run
-# `npx prisma migrate deploy` inside this image. We deliberately do NOT
-# copy scripts/ (deploy.sh runs on the VPS host) and we do NOT copy
-# db/ (no such directory in the repo).
+# `npx prisma migrate deploy` inside this image. The actual Prisma
+# client query engine is already part of the standalone output
+# (via outputFileTracingIncludes).
 COPY --from=builder --chown=node:node /app/prisma ./prisma
-COPY --from=builder --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder --chown=node:node /app/node_modules/@prisma ./node_modules/@prisma
+
+# Install the prisma CLI in the runner image so `prisma migrate deploy`
+# works at container start. pnpm uses a symlink-based node_modules
+# layout, so we can't reliably COPY from it across stages. We use npm
+# here because the runner image doesn't need a lockfile.
+# --ignore-scripts avoids re-running the postinstall (the prisma
+# client/engines are already in /app/prisma from the builder stage).
+RUN npm install --no-save --no-audit --no-fund --ignore-scripts prisma@5.22.0 \
+ && npm cache clean --force
+
+# Re-generate the prisma client in the runner image. This materialises
+# the real engine binaries under node_modules/.prisma/client (instead
+# of the symlinks left by pnpm in the builder stage), so the runtime
+# @prisma/client can dynamically load them.
+RUN ./node_modules/.bin/prisma generate \
+ && npm cache clean --force
 
 # Ensure .next/ exists and is owned by the non-root user.
 RUN mkdir -p .next && chown -R node:node .next

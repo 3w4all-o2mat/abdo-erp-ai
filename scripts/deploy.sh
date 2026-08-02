@@ -106,8 +106,11 @@ echo "[2/5] Applying Prisma migrations against the new image..."
 # `docker compose run` starts a one-off container from the new image with the
 # service's env_file + environment, but does NOT publish ports. The migration
 # is idempotent: re-running it is a no-op when the DB is already up to date.
+# We invoke the prisma CLI directly from node_modules/.bin (installed in
+# the runner image) instead of `npx prisma` to avoid npx's online
+# resolution and any network flakiness.
 docker compose -f "${COMPOSE_FILE}" run --rm --no-deps app \
-  npx prisma migrate deploy
+  ./node_modules/.bin/prisma migrate deploy
 
 # ----- Step 3: start (or restart) the app with the new image ----------------
 echo "[3/5] Starting app with the new image..."
