@@ -79,21 +79,20 @@ jobs:
           script: mkdir -p ${{ env.VPS_DEPLOY_DIR }} && echo "VPS OK"
 
       - name: Upload compose + deploy script to VPS
-        # We no longer rely on this upload — the "Run deploy on VPS"
-        # step below pulls the latest scripts/deploy.sh from the
-        # git clone on the VPS (so we always run the version that
-        # matches the commit being deployed). We keep this step as
-        # a no-op-safe fallback that just touches the file to prove
-        # SSH/SCP is working.
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
-            cd ${{ env.VPS_DEPLOY_DIR }}
-            echo "VPS reachable, deploy directory ready: $(pwd)"
+        # Use a plain `scp` here instead of appleboy/scp-action so we
+        # have explicit control over the destination path. The scp
+        # action's tar-based transport preserves the source directory
+        # structure, which would put scripts/deploy.sh at
+        # $VPS_DEPLOY_DIR/scripts/deploy.sh instead of the root.
+        run: |
+          set -e
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              ./docker-compose.yml \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.VPS_DEPLOY_DIR }}/
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+              ./scripts/deploy.sh \
+              ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}:${{ env.VPS_DEPLOY_DIR }}/deploy.sh
+          echo "Files uploaded to ${{ env.VPS_DEPLOY_DIR }}"
 
       # Stream the new image directly to the VPS Docker daemon.
       # This avoids storing the tarball as a GitHub Actions artifact.
@@ -119,18 +118,13 @@ jobs:
           script: |
             set -e
             cd ${{ env.VPS_DEPLOY_DIR }}
-            # Pull the latest deploy.sh from the repo (the VPS already
-            # has a git clone at $VPS_DEPLOY_DIR). This avoids relying
-            # on a specific path from the scp-action upload.
-            git fetch origin master
-            git checkout origin/master -- scripts/deploy.sh docker-compose.yml
-            chmod +x ./scripts/deploy.sh
+            chmod +x ./deploy.sh
             NEW_IMAGE=${{ env.IMAGE_NAME }}:${{ github.sha }} \
             NEW_TAG=${{ github.sha }} \
             PORT=${{ env.VPS_PORT }} \
             COMMIT=${{ github.sha }} \
             DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-              bash ./scripts/deploy.sh
+              bash ./deploy.sh
 
       - name: Cleanup SSH key
         if: always()
