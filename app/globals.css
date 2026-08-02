@@ -1,0 +1,256 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@layer base {
+  :root {
+    /* Light theme — clean, green-accented SaaS look */
+    --background: 150 20% 98%;
+    --foreground: 160 30% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 160 30% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 160 30% 10%;
+
+    --primary: 152 62% 38%;          /* vibrant green */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 150 25% 95%;
+    --secondary-foreground: 160 30% 15%;
+
+    --muted: 150 20% 95%;
+    --muted-foreground: 160 10% 40%;
+
+    --accent: 150 40% 92%;
+    --accent-foreground: 152 62% 25%;
+
+    --destructive: 0 72% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 60% 40%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 150 15% 90%;
+    --input: 150 15% 90%;
+    --ring: 152 62% 38%;
+
+    --sidebar: 160 40% 12%;          /* dark forest green sidebar */
+    --sidebar-foreground: 150 15% 85%;
+    --sidebar-accent: 152 55% 30%;
+    --sidebar-border: 160 30% 20%;
+
+    --chart-1: 152 62% 38%;
+    --chart-2: 210 80% 55%;
+    --chart-3: 38 92% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 0 72% 55%;
+
+    --radius: 0.75rem;
+
+    --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  }
+
+  .dark {
+    /* Dark theme */
+    --background: 160 30% 7%;
+    --foreground: 150 15% 92%;
+
+    --card: 160 28% 10%;
+    --card-foreground: 150 15% 92%;
+
+    --popover: 160 28% 10%;
+    --popover-foreground: 150 15% 92%;
+
+    --primary: 152 60% 45%;
+    --primary-foreground: 160 30% 8%;
+
+    --secondary: 160 25% 16%;
+    --secondary-foreground: 150 15% 92%;
+
+    --muted: 160 25% 15%;
+    --muted-foreground: 150 10% 65%;
+
+    --accent: 160 30% 18%;
+    --accent-foreground: 152 60% 70%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 55% 48%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 38 90% 55%;
+    --warning-foreground: 160 30% 8%;
+
+    --border: 160 25% 18%;
+    --input: 160 25% 18%;
+    --ring: 152 60% 45%;
+
+    --sidebar: 160 35% 6%;
+    --sidebar-foreground: 150 15% 85%;
+    --sidebar-accent: 152 55% 22%;
+    --sidebar-border: 160 25% 14%;
+
+    --chart-1: 152 60% 50%;
+    --chart-2: 210 80% 60%;
+    --chart-3: 38 92% 60%;
+    --chart-4: 280 65% 65%;
+    --chart-5: 0 72% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+@layer components {
+  .sidebar-link {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-sidebar-foreground/80 transition-all hover:bg-sidebar-accent/40 hover:text-sidebar-foreground;
+  }
+  .sidebar-link.active {
+    @apply bg-sidebar-accent text-sidebar-foreground shadow-sm;
+  }
+  .sidebar-link.active::before {
+    content: "";
+    @apply absolute left-0 top-1/2 h-6 -translate-y-1/2 w-1 rounded-r-full bg-primary;
+  }
+  .card-hover {
+    @apply transition-all duration-200 hover:shadow-md hover:-translate-y-0.5;
+  }
+  .gradient-primary {
+    background: linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(152 55% 30%) 100%);
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-muted-foreground/30;
+  }
+}
+
+/* Hatched pattern for breaks/empty slots (inspired by reference image) */
+.hatched {
+  background-image: repeating-linear-gradient(
+    45deg,
+    hsl(var(--muted)) 0,
+    hsl(var(--muted)) 4px,
+    transparent 4px,
+    transparent 8px
+  );
+}
+
+/* ========================================
+   Odoo-style tree view / data grid
+   ======================================== */
+.odoo-grid {
+  width: 100%;
+  text-align: left;
+  font-size: 0.875rem;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+/* Every cell (th + td) */
+.odoo-grid th,
+.odoo-grid td {
+  padding: 0 1rem;
+  height: 2.75rem;
+  vertical-align: middle;
+  border-bottom: 1px solid hsl(var(--border));
+  border-right: 1px solid hsl(var(--border));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Last column: no right border */
+.odoo-grid th:last-child,
+.odoo-grid td:last-child {
+  border-right: none;
+}
+
+/* Header row */
+.odoo-grid thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: hsl(var(--muted) / 0.5);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground));
+  border-bottom: 2px solid hsl(var(--border));
+  user-select: none;
+  height: 2.75rem;
+}
+
+/* Sortable header button */
+.odoo-grid thead th button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.odoo-grid thead th button:hover {
+  color: hsl(var(--foreground));
+}
+
+/* Body cells */
+.odoo-grid tbody td {
+  height: 2.75rem;
+  transition: background-color 0.1s;
+}
+
+/* Alternating row stripes */
+.odoo-grid tbody tr:nth-child(even) {
+  background-color: hsl(var(--muted) / 0.25);
+}
+
+/* Row hover */
+.odoo-grid tbody tr:hover {
+  background-color: hsl(var(--primary) / 0.05);
+}
+
+/* Last body row: no bottom border (footer has its own) */
+.odoo-grid tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Footer row */
+.odoo-grid tfoot tr {
+  border-top: 2px solid hsl(var(--border));
+  background-color: hsl(var(--muted) / 0.35);
+  font-weight: 600;
+}
+.odoo-grid tfoot td {
+  border-bottom: none;
+}
+
+/* Full-width empty state */
+.odoo-grid .odoo-empty {
+  padding: 2rem;
+  text-align: center;
+  color: hsl(var(--muted-foreground));
+  border-bottom: none;
+}

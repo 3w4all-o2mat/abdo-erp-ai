@@ -1,0 +1,2 @@
+# Keep this directory tracked in git. Uploaded product images are
+# ignored via .gitignore but the folder itself must exist at runtime.

@@ -1,0 +1,11 @@
+packages: []
+
+# pnpm 9.5+ top-level allow-list for native packages that need to run install scripts.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  esbuild: true
+  prisma: true
+  sharp: true
+  unrs-resolver: true
+
