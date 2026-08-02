@@ -123,7 +123,19 @@ jobs:
           command_timeout: 15m
           script: |
             set -e
+            # Diagnostics: where are we, what's around?
+            echo "PWD: $(pwd)"
+            echo "HOME: $HOME"
+            echo "=== ls -la ${{ env.VPS_DEPLOY_DIR }} ==="
+            ls -la "${{ env.VPS_DEPLOY_DIR }}" || true
+            echo "=== find ${{ env.VPS_DEPLOY_DIR }} -name deploy.sh ==="
+            find "${{ env.VPS_DEPLOY_DIR }}" -name 'deploy.sh' 2>/dev/null || true
             cd ${{ env.VPS_DEPLOY_DIR }}
+            # If deploy.sh is in a subfolder (older runs), move it up.
+            if [ ! -f ./deploy.sh ] && [ -f ./scripts/deploy.sh ]; then
+              echo "Found deploy.sh in scripts/ — moving to root."
+              mv ./scripts/deploy.sh ./deploy.sh
+            fi
             chmod +x ./deploy.sh
             NEW_IMAGE=${{ env.IMAGE_NAME }}:${{ github.sha }} \
             NEW_TAG=${{ github.sha }} \
