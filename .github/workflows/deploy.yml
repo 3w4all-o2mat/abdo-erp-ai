@@ -60,6 +60,12 @@ jobs:
           ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
           echo "SSH key ready."
 
+      # ---------------------------------------------------------------
+      # The deploy script and docker-compose.yml are pulled directly
+      # from the raw GitHub URL for the commit being deployed. This
+      # removes any dependency on a git clone existing on the VPS or
+      # on scp path-mapping quirks.
+      # ---------------------------------------------------------------
       - name: Run deploy on VPS
         uses: appleboy/ssh-action@v1
         with:
@@ -69,81 +75,41 @@ jobs:
           command_timeout: 15m
           envs: NEW_IMAGE,NEW_TAG,PORT,COMMIT,DEPLOYED_AT
           script: |
-            # NOTE: no `set -e` here on purpose — we want to see the
-            # full output of every step so it's clear where it fails.
+            set -e
             DEPLOY_DIR="${{ env.VPS_DEPLOY_DIR }}"
-            SHA="${{ github.sha }}"
-            RAW="https://raw.githubusercontent.com/${{ github.repository }}/$SHA"
+            RAW_BASE="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}"
 
-            echo "============================================================"
-            echo "  abdo-erp deploy"
-            echo "  IMAGE : ${{ env.IMAGE_NAME }}:$SHA"
-            echo "  DIR   : $DEPLOY_DIR"
-            echo "  PORT  : ${{ env.VPS_PORT }}"
-            echo "============================================================"
-
-            echo ""
-            echo "--- 1. Pre-flight: target directory ---"
+            echo "=== Pre-flight ==="
+            echo "DEPLOY_DIR: $DEPLOY_DIR"
+            echo "RAW_BASE:   $RAW_BASE"
             if [ ! -d "$DEPLOY_DIR" ]; then
               mkdir -p "$DEPLOY_DIR"
-              echo "       created $DEPLOY_DIR (was missing)"
-            else
-              echo "       $DEPLOY_DIR already exists"
+              echo "       created (was missing)."
             fi
             cd "$DEPLOY_DIR"
-            echo "       PWD: $(pwd)"
 
-            echo ""
-            echo "--- 2. Pre-flight: curl/wget ---"
+            echo "=== Downloading deploy.sh and docker-compose.yml from GitHub ==="
             if command -v curl >/dev/null 2>&1; then
-              DL=curl
+              curl -fsSL -o deploy.sh        "$RAW_BASE/scripts/deploy.sh"
+              curl -fsSL -o docker-compose.yml "$RAW_BASE/docker-compose.yml"
             elif command -v wget >/dev/null 2>&1; then
-              DL=wget
+              wget -q -O deploy.sh        "$RAW_BASE/scripts/deploy.sh"
+              wget -q -O docker-compose.yml "$RAW_BASE/docker-compose.yml"
             else
-              echo "       ERROR: neither curl nor wget is available on the VPS"
+              echo "ERROR: neither curl nor wget is available on the VPS" >&2
               exit 1
             fi
-            echo "       using: $DL"
-
-            echo ""
-            echo "--- 3. Download deploy.sh ---"
-            if [ "$DL" = "curl" ]; then
-              curl -fsSL -o deploy.sh "$RAW/scripts/deploy.sh"
-            else
-              wget -q -O deploy.sh "$RAW/scripts/deploy.sh"
-            fi
-            echo "       deploy.sh: $(ls -la deploy.sh)"
-
-            echo ""
-            echo "--- 4. Download docker-compose.yml ---"
-            if [ "$DL" = "curl" ]; then
-              curl -fsSL -o docker-compose.yml "$RAW/docker-compose.yml"
-            else
-              wget -q -O docker-compose.yml "$RAW/docker-compose.yml"
-            fi
+            chmod +x deploy.sh
+            echo "       deploy.sh:        $(ls -la deploy.sh)"
             echo "       docker-compose.yml: $(ls -la docker-compose.yml)"
 
-            chmod +x deploy.sh
-
-            echo ""
-            echo "--- 5. Run deploy.sh ---"
-            NEW_IMAGE="${{ env.IMAGE_NAME }}:$SHA" \
-            NEW_TAG="$SHA" \
+            echo "=== Running deploy.sh ==="
+            NEW_IMAGE="${{ env.IMAGE_NAME }}:${{ github.sha }}" \
+            NEW_TAG="${{ github.sha }}" \
             PORT="${{ env.VPS_PORT }}" \
-            COMMIT="$SHA" \
+            COMMIT="${{ github.sha }}" \
             DEPLOYED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               bash "$DEPLOY_DIR/deploy.sh"
-            DEPLOY_EXIT=$?
-            echo ""
-            echo "============================================================"
-            if [ "$DEPLOY_EXIT" -eq 0 ]; then
-              echo "  Deploy SUCCEEDED."
-            else
-              echo "  Deploy FAILED with exit code $DEPLOY_EXIT."
-              echo "  See errors above."
-            fi
-            echo "============================================================"
-            exit $DEPLOY_EXIT
 
       - name: Cleanup SSH key
         if: always()
