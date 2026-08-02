@@ -114,21 +114,26 @@ COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 # (via outputFileTracingIncludes).
 COPY --from=builder --chown=node:node /app/prisma ./prisma
 
-# Install the prisma CLI in the runner image so `prisma migrate deploy`
-# works at container start. pnpm uses a symlink-based node_modules
-# layout, so we can't reliably COPY from it across stages. We use npm
-# here because the runner image doesn't need a lockfile.
-# --ignore-scripts avoids re-running the postinstall (the prisma
-# client/engines are already in /app/prisma from the builder stage).
-RUN npm install --no-save --no-audit --no-fund --ignore-scripts prisma@5.22.0 \
+# Install the prisma CLI globally in the runner image so
+# `prisma migrate deploy` works at container start. pnpm uses a
+# symlink-based node_modules layout, so we can't reliably COPY the
+# CLI from the builder across stages. We do a global install (no
+# package.json needed in the runner) and use --ignore-scripts to
+# avoid the postinstall (we'll re-run `prisma generate` below).
+ENV NPM_CONFIG_PREFIX=/usr/local
+RUN npm install -g --no-audit --no-fund --ignore-scripts prisma@5.22.0 \
  && npm cache clean --force
+
+# Make sure /usr/local/bin is in the non-root user's PATH.
+ENV PATH=/usr/local/bin:$PATH
 
 # Re-generate the prisma client in the runner image. This materialises
 # the real engine binaries under node_modules/.prisma/client (instead
 # of the symlinks left by pnpm in the builder stage), so the runtime
 # @prisma/client can dynamically load them.
-RUN ./node_modules/.bin/prisma generate \
- && npm cache clean --force
+# (prisma generate writes to ./node_modules/.prisma when invoked
+# inside the project root that has a schema.prisma file.)
+RUN prisma generate
 
 # Ensure .next/ exists and is owned by the non-root user.
 RUN mkdir -p .next && chown -R node:node .next
