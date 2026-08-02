@@ -3,6 +3,8 @@ services:
     image: postgres:16-alpine
     container_name: abdo_erp_postgres
     restart: unless-stopped
+    env_file:
+      - .env.production
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -14,8 +16,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    networks:
-      - erp_net
+
 
   app:
     image: ${IMAGE:-abdo-erp}:${TAG:-latest}
