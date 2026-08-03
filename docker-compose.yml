@@ -4,17 +4,28 @@ services:
     container_name: abdo_erp_postgres
     restart: unless-stopped
     volumes:
-      - ./postgres_data:/var/lib/postgresql/data 
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      - ./postgres_data:/var/lib/postgresql/data
+    # POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB come from .env.production
+    env_file:
+      - .env.production
+    healthcheck:
+      # $$POSTGRES_USER / $$POSTGRES_DB -> expanded inside the container at
+      # runtime (the escaping prevents docker compose from interpolating them).
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     networks:
       - app_network
 
-
   app:
-    image: ghcr.io/3w4all-o2mat/abdo-erp-ai:latest
+    # Image is built locally on the VPS (docker compose build app) — no GHCR
+    # pull needed. `image:` is just the local tag used by compose.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: abdo-erp-ai:local
     container_name: abdo-erp
     restart: unless-stopped
     ports:
@@ -40,7 +51,8 @@ services:
     volumes:
       - ./public:/app/public
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
 
 networks:
   app_network:

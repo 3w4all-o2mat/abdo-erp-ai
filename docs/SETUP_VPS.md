@@ -2,7 +2,17 @@
 
 This is the one-time setup needed to make the `Deploy to VPS` GitHub
 Actions workflow work. Once the steps below are done, every push to
-`master` will build, push and run `prisma migrate deploy` on the VPS.
+`master` (or `main`) will:
+
+1. **CI** — typecheck + build on a GitHub runner (acts as a regression gate;
+   nothing deploys if it fails).
+2. **Deploy** — SSH into the VPS, `git pull`, then `scripts/deploy.sh`,
+   which builds the image **locally on the VPS** with `docker compose`,
+   waits for `postgres` to be healthy, applies `prisma migrate deploy`,
+   restarts the `app` container and health-checks it.
+
+No GHCR / image registry is used: secrets stay on the VPS in
+`.env.production`, and the image is built where it runs.
 
 > **Target:** Ubuntu 22.04 or 24.04, user `ubuntu`, project deployed to
 > `/home/ubuntu/abdo-erp-ai`, app served on port 3000.
@@ -53,7 +63,7 @@ also open TCP 3000 there.
 
 ## 3. Add the GitHub Actions deploy key
 
-On **your Mac** (already done — key lives at `~/.ssh/github_actions`):
+On **your Mac** (key lives at `~/.ssh/github_actions`):
 
 ```bash
 cat ~/.ssh/github_actions.pub
@@ -84,6 +94,9 @@ cd /home/ubuntu/abdo-erp-ai
 ssh-keyscan github.com >> ~/.ssh/known_hosts
 ```
 
+> The VPS clones over SSH, so it can `git pull` non-interactively during
+> deploys. The `ssh-keyscan` line above trusts GitHub's host key.
+
 ## 5. Create the production environment file
 
 ```bash
@@ -113,6 +126,9 @@ Lock the file down:
 chmod 600 .env.production
 ```
 
+> `docker-compose.yml` reads this file via `env_file` for **both** the
+> `postgres` and `app` services. No separate `.env` file is needed.
+
 ## 6. Add the GitHub repository secrets
 
 On GitHub: **Settings → Secrets and variables → Actions → New repository secret**
@@ -127,11 +143,12 @@ On GitHub: **Settings → Secrets and variables → Actions → New repository s
 
 The next `git push origin master` will:
 
-1. Build the Docker image on the GitHub runner.
-2. Stream it to the VPS.
+1. Run the **CI** job (typecheck + build) on a GitHub runner.
+2. SSH into the VPS and run `git pull`.
 3. Run `scripts/deploy.sh`, which:
+   - builds the `app` image locally with `docker compose build app`,
    - waits for `postgres` to be healthy,
-   - runs `prisma migrate deploy` (applies the committed migration),
+   - runs `prisma migrate deploy` (applies the committed migrations),
    - restarts the `app` container,
    - health-checks `http://127.0.0.1:3000/`,
    - prunes dangling images.
@@ -154,6 +171,7 @@ http://57.131.23.145:3000
 |---|---|---|
 | `error: missing server host` in the run | `VPS_HOST` secret is empty | Add the secret and re-run |
 | `Permission denied (publickey)` on SSH step | The deploy public key isn't in `~/.ssh/authorized_keys` on the VPS | Re-paste `~/.ssh/github_actions.pub` on the VPS |
+| `git pull` fails with host key prompt | GitHub isn't in the VPS's `known_hosts` | Re-run `ssh-keyscan github.com >> ~/.ssh/known_hosts` |
 | App container exits with `Can't reach database server` | `DATABASE_URL` uses `localhost` instead of the service name | Make sure it uses `@postgres:5432` |
 | `prisma migrate deploy` fails with P3009 | Schema drift | Check the migration files in `prisma/migrations/` |
 | Port 3000 is closed | VPS firewall or provider firewall | `sudo ufw allow 3000/tcp` and check the provider's network rules |

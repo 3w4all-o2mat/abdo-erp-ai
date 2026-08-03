@@ -102,7 +102,7 @@ You'll need:
 - `VPS_HOST` = your public IP (e.g. `203.0.113.10`)
 - `VPS_USER` = the SSH user (`ubuntu` if you followed step 1.2, otherwise `root`)
 
-### 2.3 Also generate the secrets for your `.env`
+### 2.3 Also generate the secrets for your `.env.production`
 
 ```bash
 # Strong secrets for AUTH_SECRET / NEXTAUTH_SECRET
@@ -176,11 +176,11 @@ ssh-keyscan github.com >> ~/.ssh/known_hosts
 
 > The deploy workflow will also need to pull from GitHub. If you cloned over HTTPS you'd need a token; using the deploy key we set up in step 2 means you should switch the remote to SSH (already done above) **and** you need to add GitHub's key to the VPS's `known_hosts` (the line above). If you prefer, change the remote to `https://github.com/...` and put a GitHub PAT in the env instead.
 
-### 4.2 Create the production `.env`
+### 4.2 Create the production `.env.production`
 
 ```bash
 cd /home/ubuntu/abdo-erp-ai
-nano .env
+nano .env.production
 ```
 
 Paste the following, filling in real values (use the secrets you generated in 2.3):
@@ -205,16 +205,18 @@ Save with `Ctrl+O`, `Enter`, `Ctrl+X`.
 Lock the file down:
 
 ```bash
-chmod 600 .env
+chmod 600 .env.production
 ```
 
-### 4.3 Bring up the database and build the app
+### 4.3 Build and start the app
+
+Run the same deploy script that CI uses. It builds the image locally, waits
+for postgres to be healthy, applies migrations, starts the app and
+health-checks it:
 
 ```bash
 cd /home/ubuntu/abdo-erp-ai
-docker compose up -d --build postgres
-docker compose run --rm app npx prisma migrate deploy
-docker compose up -d --build app
+./scripts/deploy.sh
 ```
 
 The first build will take ~5 minutes (pnpm install + Next.js build). Watch it with:
@@ -233,13 +235,17 @@ You should see the public home page. Admin login lives at `http://YOUR_VPS_IP:30
 
 ### 4.4 (Optional) Seed initial data
 
-If you want the default roles/users from `prisma/seed.ts`:
+Seeding is **not** part of the CI/CD pipeline (so a deploy never resets your
+admin credentials). If you want the default roles + `admin / admin123` user
+from `prisma/seed.ts`, run it once with the app image (tsx is installed on
+the fly):
 
 ```bash
-docker compose exec app node -e "require('child_process').execSync('npx prisma db seed', {stdio:'inherit'})"
+cd /home/ubuntu/abdo-erp-ai
+docker compose run --rm -u root app sh -c "npm install -g tsx >/dev/null 2>&1 && tsx prisma/seed.ts"
 ```
 
-Or add a one-off seed step to the deploy workflow later.
+> Change the default admin password right after the first login.
 
 ---
 
@@ -278,6 +284,9 @@ docker compose logs -f postgres
 
 # Open a shell inside the app container
 docker compose exec app sh
+
+# Apply migrations manually (same command CI runs)
+docker compose run --rm --no-deps -u root app prisma migrate deploy
 
 # Run psql
 docker compose exec postgres psql -U appuser -d mini_erp
