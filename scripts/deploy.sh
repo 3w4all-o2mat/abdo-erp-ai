@@ -14,7 +14,7 @@
 # All config comes from `.env.production` (via docker-compose.yml env_file).
 #
 # Optional env overrides:
-#   DEPLOY_DIR      - repo path on the VPS (default /home/ubuntu/abdo-erp-ai)
+#   DEPLOY_DIR      - repo path on the VPS (default /home/ubuntu/abdo-erp)
 #   HEALTH_URL      - URL to health-check (default http://127.0.0.1:3000/)
 #   HEALTH_RETRIES  - health-check attempts (default 30)
 #   HEALTH_SLEEP    - seconds between attempts (default 2)
@@ -23,7 +23,7 @@
 set -euo pipefail
 
 # ----- Configuration ---------------------------------------------------------
-DEPLOY_DIR="${DEPLOY_DIR:-/home/ubuntu/abdo-erp-ai}"
+DEPLOY_DIR="${DEPLOY_DIR:-/home/ubuntu/abdo-erp}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3000/}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-30}"   # 30 * 2s = 60s
 HEALTH_SLEEP="${HEALTH_SLEEP:-2}"

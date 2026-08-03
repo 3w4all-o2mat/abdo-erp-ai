@@ -23,7 +23,7 @@ on:
   workflow_dispatch:
 
 env:
-  VPS_DEPLOY_DIR: /home/ubuntu/abdo-erp-ai
+  VPS_DEPLOY_DIR: /home/ubuntu/abdo-erp
 
 jobs:
   ci:
